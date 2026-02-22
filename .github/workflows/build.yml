@@ -1,76 +1,156 @@
-name: Garak Auto-Updater & Builder
-
+name: Garak AUR Updater
 on:
   schedule:
-    # Runs at midnight UTC every single day
-    - cron: '0 0 * * *'
+    - cron: '0 0 */3 * *'
   workflow_dispatch:
   push:
     branches: [ main ]
     paths:
-      - 'PKGBUILD' # Triggers a build if you manually edit the file
+      - 'PKGBUILD'
 
 permissions:
-  contents: write 
+  contents: write
 
 jobs:
-  check-build-release:
+  update-aur:
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Update system & install tools
-        run: pacman -Syu --noconfirm git sudo jq curl
-          
-      - name: Create builder user
-        # Fix Git safe directory constraints inside containers
-        run: |
-          useradd builder -m
-          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          chown -R builder:builder "$GITHUB_WORKSPACE"
-
-      - name: Check PyPI for updates and bump version
+      - name: Check PyPI for updates
         id: version_check
         run: |
           LATEST_VERSION=$(curl -sL "https://pypi.org/pypi/garak/json" | jq -r '.info.version')
-          
           CURRENT_VERSION=$(grep "^pkgver=" PKGBUILD | cut -d= -f2)
-          
           echo "PyPI Version: $LATEST_VERSION"
           echo "Local Version: $CURRENT_VERSION"
-          
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
-            echo "New version detected! Bumping to $LATEST_VERSION..."
-            
-            # Update the PKGBUILD versions
-            sed -i "s/^pkgver=.*/pkgver=$LATEST_VERSION/" PKGBUILD
-            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-            
-            # Have the builder download the new source and update the hash array
-            su builder -c "updpkgsums"
-            su builder -c "makepkg --printsrcinfo > .SRCINFO"
-            
-            # Set up the Git bot and push the changes
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add PKGBUILD .SRCINFO
-            git commit -m "ci: auto-bump garak to $LATEST_VERSION"
-            git push
+            echo "bumped=true" >> $GITHUB_OUTPUT
           else
-            echo "Already up to date. Proceeding to build."
+            echo "bumped=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build the Arch package
-        run: su builder -c "makepkg -s --noconfirm"
+      - name: Update PKGBUILD
+        if: steps.version_check.outputs.bumped == 'true'
+        run: |
+          LATEST_VERSION="${{ steps.version_check.outputs.version }}"
+          _name=garak
 
-      - name: Upload the compiled package
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-garak-pkg
-          path: "*.pkg.tar.zst"
+          # Fetch the new sha256 from PyPI metadata directly — no need to download the tarball
+          SHA256=$(curl -sL "https://pypi.org/pypi/garak/json" | \
+            jq -r ".releases[\"$LATEST_VERSION\"][] | select(.packagetype==\"sdist\") | .digests.sha256")
+
+          sed -i "s/^pkgver=.*/pkgver=$LATEST_VERSION/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('$SHA256')/" PKGBUILD
+
+      - name: Update README version
+        if: steps.version_check.outputs.bumped == 'true'
+        run: |
+          sed -i "s/\*\*Current Version:\*\* .*/\*\*Current Version:\*\* ${{ steps.version_check.outputs.version }}/" README.md
+          git add README.md
+
+      - name: Regenerate .SRCINFO
+        if: steps.version_check.outputs.bumped == 'true'
+        run: |
+          # Install minimal makepkg tooling just for --printsrcinfo
+          sudo apt-get install -y libarchive-tools
+          # makepkg isn't available on ubuntu, so we generate .SRCINFO with a python helper instead
+          python3 - <<'EOF'
+          import re, sys
+
+          with open("PKGBUILD") as f:
+              content = f.read()
+
+          def get(key):
+              m = re.search(rf'^{key}=(.+)$', content, re.MULTILINE)
+              return m.group(1).strip("'\"") if m else ''
+
+          def get_array(key):
+              m = re.search(rf'^{key}=\((.+?)\)', content, re.DOTALL | re.MULTILINE)
+              if not m:
+                  return []
+              return re.findall(r"'([^']+)'|\"([^\"]+)\"|(\S+)", m.group(1))
+
+          def flatten(tuples):
+              return [next(x for x in t if x) for t in tuples]
+
+          pkgver = get('pkgver')
+          pkgrel = get('pkgrel')
+          pkgname = get('pkgname')
+          pkgdesc = get('pkgdesc')
+          arch = flatten(get_array('arch'))
+          url = get('url')
+          license_ = flatten(get_array('license'))
+          depends = flatten(get_array('depends'))
+          makedepends = flatten(get_array('makedepends'))
+          options = flatten(get_array('options'))
+          source = flatten(get_array('source'))
+          sha256sums = flatten(get_array('sha256sums'))
+
+          lines = ["# Generated by python-garak CI", ""]
+          lines.append("pkgbase = " + pkgname)
+          lines.append("\tpkgdesc = " + pkgdesc)
+          lines.append("\tpkgver = " + pkgver)
+          lines.append("\tpkgrel = " + pkgrel)
+          lines.append("\turl = " + url)
+          for a in arch:
+              lines.append("\tarch = " + a)
+          for l in license_:
+              lines.append("\tlicense = " + l)
+          for d in makedepends:
+              lines.append("\tmakedepends = " + d)
+          for d in depends:
+              lines.append("\tdepends = " + d)
+          if options:
+              for o in options:
+                  lines.append("\toptions = " + o)
+          for s in source:
+              lines.append("\tsource = " + s)
+          for s in sha256sums:
+              lines.append("\tsha256sums = " + s)
+          lines.append("")
+          lines.append("pkgname = " + pkgname)
+          lines.append("")
+
+          with open(".SRCINFO", "w") as f:
+              f.write("\n".join(lines))
+          print("Generated .SRCINFO")
+          EOF
+
+      - name: Commit and push to GitHub
+        if: steps.version_check.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "ci: auto-bump garak to ${{ steps.version_check.outputs.version }}"
+          git push
+
+      - name: Push to AUR
+        if: steps.version_check.outputs.bumped == 'true'
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+
+          git clone ssh://aur@aur.archlinux.org/python-garak.git /tmp/aur-pkg
+          cp PKGBUILD .SRCINFO /tmp/aur-pkg/
+          cd /tmp/aur-pkg
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "upgpkg: python-garak ${{ steps.version_check.outputs.version }}"
+          git push
