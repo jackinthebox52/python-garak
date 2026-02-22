@@ -4,12 +4,12 @@ on:
   schedule:
     # Runs at midnight UTC every single day
     - cron: '0 0 * * *'
-  workflow_dispatch: # Allows you to click a button in GitHub to run it manually
+  workflow_dispatch:
   push:
+    branches: [ main ]
     paths:
       - 'PKGBUILD' # Triggers a build if you manually edit the file
 
-# This is CRITICAL. It gives the GitHub Action permission to push commits back to your repo.
 permissions:
   contents: write 
 
@@ -22,7 +22,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches full history so we can push back
+          fetch-depth: 0
 
       - name: Update system & install tools
         run: pacman -Syu --noconfirm git sudo jq curl
@@ -38,16 +38,13 @@ jobs:
       - name: Check PyPI for updates and bump version
         id: version_check
         run: |
-          # 1. Fetch latest version from PyPI using jq
           LATEST_VERSION=$(curl -sL "https://pypi.org/pypi/garak/json" | jq -r '.info.version')
           
-          # 2. Extract the current version from your PKGBUILD
           CURRENT_VERSION=$(grep "^pkgver=" PKGBUILD | cut -d= -f2)
           
           echo "PyPI Version: $LATEST_VERSION"
           echo "Local Version: $CURRENT_VERSION"
           
-          # 3. Compare and act
           if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
             echo "New version detected! Bumping to $LATEST_VERSION..."
             
