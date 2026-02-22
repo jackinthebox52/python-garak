@@ -9,6 +9,7 @@ url="https://github.com/NVIDIA/garak"
 license=('Apache-2.0') 
 depends=('python')
 makedepends=('python-pip' 'python-virtualenv')
+options=('!strip' '!zipman')
 source=("https://files.pythonhosted.org/packages/source/${_name::1}/$_name/$_name-$pkgver.tar.gz")
 sha256sums=('SKIP')
 
