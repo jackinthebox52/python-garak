@@ -1,0 +1,79 @@
+name: Garak Auto-Updater & Builder
+
+on:
+  schedule:
+    # Runs at midnight UTC every single day
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Allows you to click a button in GitHub to run it manually
+  push:
+    paths:
+      - 'PKGBUILD' # Triggers a build if you manually edit the file
+
+# This is CRITICAL. It gives the GitHub Action permission to push commits back to your repo.
+permissions:
+  contents: write 
+
+jobs:
+  check-build-release:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches full history so we can push back
+
+      - name: Update system & install tools
+        run: pacman -Syu --noconfirm git sudo jq curl
+          
+      - name: Create builder user
+        # Fix Git safe directory constraints inside containers
+        run: |
+          useradd builder -m
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Check PyPI for updates and bump version
+        id: version_check
+        run: |
+          # 1. Fetch latest version from PyPI using jq
+          LATEST_VERSION=$(curl -sL "https://pypi.org/pypi/garak/json" | jq -r '.info.version')
+          
+          # 2. Extract the current version from your PKGBUILD
+          CURRENT_VERSION=$(grep "^pkgver=" PKGBUILD | cut -d= -f2)
+          
+          echo "PyPI Version: $LATEST_VERSION"
+          echo "Local Version: $CURRENT_VERSION"
+          
+          # 3. Compare and act
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "New version detected! Bumping to $LATEST_VERSION..."
+            
+            # Update the PKGBUILD versions
+            sed -i "s/^pkgver=.*/pkgver=$LATEST_VERSION/" PKGBUILD
+            sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+            
+            # Have the builder download the new source and update the hash array
+            su builder -c "updpkgsums"
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+            
+            # Set up the Git bot and push the changes
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add PKGBUILD .SRCINFO
+            git commit -m "ci: auto-bump garak to $LATEST_VERSION"
+            git push
+          else
+            echo "Already up to date. Proceeding to build."
+          fi
+
+      - name: Build the Arch package
+        run: su builder -c "makepkg -s --noconfirm"
+
+      - name: Upload the compiled package
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-garak-pkg
+          path: "*.pkg.tar.zst"
