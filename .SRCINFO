@@ -2,7 +2,7 @@
 
 pkgbase = python-$_name
 	pkgdesc = The LLM Vulnerability Scanner - Generative AI Red-teaming & Assessment Kit
-	pkgver = 0.14.1
+	pkgver = 0.15.0
 	pkgrel = 1
 	url = https://github.com/NVIDIA/garak
 	arch = any
@@ -13,6 +13,6 @@ pkgbase = python-$_name
 	options = !strip
 	options = !zipman
 	source = https://files.pythonhosted.org/packages/source/${_name::1}/$_name/$_name-$pkgver.tar.gz
-	sha256sums = 081c0f7258e5f4509a47a6a217d89aa311d127357ff596b600e6ee5a7e317922
+	sha256sums = f85315c18ca15d5e3f5650abd66df4d267f51ad067147b1538a7e633acf5e07b
 
 pkgname = python-$_name
