@@ -1,7 +1,7 @@
 # Maintainer: Jackson Massey <jackmassey2000@gmail.com>
 _name=garak
 pkgname=python-$_name
-pkgver=0.15.0
+pkgver=0.15.1
 pkgrel=1
 pkgdesc="The LLM Vulnerability Scanner - Generative AI Red-teaming & Assessment Kit"
 arch=('any')
@@ -11,7 +11,7 @@ depends=('python')
 makedepends=('python-pip' 'python-virtualenv')
 options=('!strip' '!zipman')
 source=("https://files.pythonhosted.org/packages/source/${_name::1}/$_name/$_name-$pkgver.tar.gz")
-sha256sums=('f85315c18ca15d5e3f5650abd66df4d267f51ad067147b1538a7e633acf5e07b')
+sha256sums=('2f0aa66c705d49c9b18ce96012d2f730242d8d75257e4af02d9f4a0a41fe205f')
 
 build() {
   :
